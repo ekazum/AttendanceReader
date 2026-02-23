@@ -36,6 +36,11 @@ DATE_RE = re.compile(r"^\d{2}/\d{2}$")
 TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 
 
+def _is_date_row(texts: list) -> bool:
+    """Return True if *texts* contains 3 or more DD/MM date tokens."""
+    return sum(1 for t in texts if DATE_RE.match(t)) >= 3
+
+
 # ---------------------------------------------------------------------------
 # PDF extraction helpers
 # ---------------------------------------------------------------------------
@@ -78,58 +83,126 @@ def _build_lookup(row_words: list, pattern=None) -> dict:
     return result
 
 
-def _process_page(page) -> list:
-    """Extract attendance records from a single pdfplumber page object."""
-    words = page.extract_words(
-        x_tolerance=3, y_tolerance=3, keep_blank_chars=False
+def _build_data_lookup(
+    row_words: list,
+    data_x_min: float,
+    data_x_max: float,
+    tolerance: float,
+    pattern=None,
+) -> dict:
+    """Build {x_center: text} for words whose x-center falls within the data
+    column range [data_x_min - tolerance, data_x_max + tolerance].
+
+    This excludes row-label words that sit outside the column grid.
+    If *pattern* is provided, only words matching it are included (for time rows).
+    """
+    result = {}
+    for w in row_words:
+        cx = _x_center(w)
+        if cx < data_x_min - tolerance or cx > data_x_max + tolerance:
+            continue
+        text = w["text"]
+        if pattern is None or pattern.match(text):
+            result[cx] = text
+    return result
+
+
+def _row_label(row_words: list) -> str:
+    """Return a single string formed by joining all non-time, non-date words in
+    the row.  Used to identify which semantic role a row plays (entry, exit,
+    total, day-type, …)."""
+    return " ".join(
+        w["text"]
+        for w in row_words
+        if not TIME_RE.match(w["text"]) and not DATE_RE.match(w["text"])
     )
-    if not words:
-        return []
 
-    sorted_rows = _group_rows(words)
 
-    date_row = None
-    day_row = None
-    time_rows: list = []   # up to three rows: entry, exit, total
+def _process_block(block_rows: list) -> list:
+    """Process one horizontal grid block (date row + its associated data rows).
 
-    for _y, row_words in sorted_rows:
+    Rows are classified by their Hebrew label text rather than by position
+    index, so overtime rows and other extra rows are safely ignored.
+    """
+    date_row_words = None
+    day_row_words = None
+    entry_row_words = None
+    exit_row_words = None
+    total_row_words = None
+    day_type_row_words = None
+
+    for _y, row_words in block_rows:
         texts = [w["text"] for w in row_words]
 
-        dates_count = sum(1 for t in texts if DATE_RE.match(t))
-        if dates_count >= 3 and date_row is None:
-            date_row = row_words
+        # Date row (3+ DD/MM tokens) – already the first row of the block but
+        # handle it here for completeness.
+        if _is_date_row(texts):
+            if date_row_words is None:
+                date_row_words = row_words
             continue
 
-        days_count = sum(1 for t in texts if t in HEBREW_DAYS)
-        if days_count >= 3 and day_row is None:
-            day_row = row_words
+        # Day-letter row (3+ single Hebrew day letters)
+        if sum(1 for t in texts if t in HEBREW_DAYS) >= 3:
+            if day_row_words is None:
+                day_row_words = row_words
             continue
 
-        times_count = sum(1 for t in texts if TIME_RE.match(t))
-        if times_count >= 3 and len(time_rows) < 3:
-            time_rows.append(row_words)
+        # Classify remaining rows by their Hebrew label
+        label = _row_label(row_words)
 
-    if not date_row:
+        if "שעת כניסה" in label and entry_row_words is None:
+            entry_row_words = row_words
+        elif "שעת יציאה" in label and exit_row_words is None:
+            exit_row_words = row_words
+        elif "סה" in label and "נוכח" in label and total_row_words is None:
+            total_row_words = row_words
+        elif ("סוג יום" in label or "נוכחות" in label) and day_type_row_words is None:
+            day_type_row_words = row_words
+
+    if not date_row_words:
         return []
 
-    # Collect date columns sorted by x-position
+    # Collect date columns sorted left-to-right
     date_cols = sorted(
-        [((_x_center(w), w["text"])) for w in date_row if DATE_RE.match(w["text"])],
+        [(_x_center(w), w["text"]) for w in date_row_words if DATE_RE.match(w["text"])],
         key=lambda p: p[0],
     )
+    if not date_cols:
+        return []
 
-    # Adaptive tolerance: 40% of average inter-column spacing (min 10 pt)
+    # Adaptive column-matching tolerance: max(45% of avg inter-column spacing, 10 pt)
+    xs = [x for x, _ in date_cols]
+    data_x_min, data_x_max = xs[0], xs[-1]
     if len(date_cols) > 1:
-        xs = [x for x, _ in date_cols]
-        avg_spacing = (xs[-1] - xs[0]) / (len(xs) - 1)
+        avg_spacing = (data_x_max - data_x_min) / (len(xs) - 1)
         tolerance = max(avg_spacing * 0.45, 10.0)
     else:
         tolerance = 15.0
 
-    day_lookup = _build_lookup(day_row) if day_row else {}
-    entry_lookup = _build_lookup(time_rows[0], TIME_RE) if len(time_rows) > 0 else {}
-    exit_lookup = _build_lookup(time_rows[1], TIME_RE) if len(time_rows) > 1 else {}
-    total_lookup = _build_lookup(time_rows[2], TIME_RE) if len(time_rows) > 2 else {}
+    # Day lookup: only HEBREW_DAYS letters (excludes label words automatically)
+    day_lookup = {
+        _x_center(w): w["text"]
+        for w in (day_row_words or [])
+        if w["text"] in HEBREW_DAYS
+    }
+
+    entry_lookup = (
+        _build_data_lookup(entry_row_words, data_x_min, data_x_max, tolerance, TIME_RE)
+        if entry_row_words else {}
+    )
+    exit_lookup = (
+        _build_data_lookup(exit_row_words, data_x_min, data_x_max, tolerance, TIME_RE)
+        if exit_row_words else {}
+    )
+    total_lookup = (
+        _build_data_lookup(total_row_words, data_x_min, data_x_max, tolerance, TIME_RE)
+        if total_row_words else {}
+    )
+    # Day-type: no pattern filter – values are free Hebrew text (e.g. "חופשה")
+    day_type_lookup = (
+        _build_data_lookup(day_type_row_words, data_x_min, data_x_max, tolerance)
+        if day_type_row_words else {}
+    )
 
     records = []
     for x, date in date_cols:
@@ -138,6 +211,7 @@ def _process_page(page) -> list:
         entry = _find_closest(entry_lookup, x, tolerance)
         exit_time = _find_closest(exit_lookup, x, tolerance)
         total = _find_closest(total_lookup, x, tolerance)
+        day_type = _find_closest(day_type_lookup, x, tolerance)
 
         records.append(
             {
@@ -146,9 +220,47 @@ def _process_page(page) -> list:
                 "entry": entry,
                 "exit": exit_time,
                 "total": total,
+                "day_type": day_type,
             }
         )
 
+    return records
+
+
+def _process_page(page) -> list:
+    """Extract attendance records from a single pdfplumber page object.
+
+    A page may contain multiple horizontal grid blocks (e.g. days 1-15 on top,
+    days 16-31 below).  Each block is identified by a date row (3+ DD/MM
+    tokens) and processed independently.
+    """
+    words = page.extract_words(
+        x_tolerance=3, y_tolerance=3, keep_blank_chars=False
+    )
+    if not words:
+        return []
+
+    sorted_rows = _group_rows(words)
+
+    # Split rows into blocks; a new block begins whenever a date row is found.
+    blocks: list = []
+    current_block: list = []
+
+    for y, row_words in sorted_rows:
+        texts = [w["text"] for w in row_words]
+        if _is_date_row(texts):
+            if current_block:
+                blocks.append(current_block)
+            current_block = [(y, row_words)]
+        elif current_block:
+            current_block.append((y, row_words))
+
+    if current_block:
+        blocks.append(current_block)
+
+    records = []
+    for block in blocks:
+        records.extend(_process_block(block))
     return records
 
 
@@ -165,8 +277,8 @@ def extract_attendance_data(pdf_path: str) -> list:
 # Excel output
 # ---------------------------------------------------------------------------
 
-HEADERS = ["תאריך", "יום בשבוע", "שעת כניסה", "שעת יציאה", 'סה"כ שעות ליום']
-COLUMN_WIDTHS = [12, 15, 14, 14, 18]
+HEADERS = ["תאריך", "יום בשבוע", "שעת כניסה", "שעת יציאה", 'סה"כ שעות ליום', "סוג יום"]
+COLUMN_WIDTHS = [12, 15, 14, 14, 18, 14]
 
 
 def create_excel(records: list, output_path: str) -> None:
@@ -198,6 +310,7 @@ def create_excel(records: list, output_path: str) -> None:
             record["entry"],
             record["exit"],
             record["total"],
+            record.get("day_type", ""),
         ]
         for col, value in enumerate(values, 1):
             cell = ws.cell(row=row_idx, column=col, value=value)
@@ -209,7 +322,7 @@ def create_excel(records: list, output_path: str) -> None:
         ws.column_dimensions[get_column_letter(col)].width = width
 
     # Usability helpers
-    ws.auto_filter.ref = f"A1:E{len(records) + 1}"
+    ws.auto_filter.ref = f"A1:F{len(records) + 1}"
     ws.freeze_panes = "A2"
 
     wb.save(output_path)
