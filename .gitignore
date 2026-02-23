@@ -3,6 +3,11 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# Google Cloud service-account credential files
+*-key.json
+*-credentials.json
+service-account*.json
+
 # C extensions
 *.so
 
