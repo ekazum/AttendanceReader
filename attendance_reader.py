@@ -119,19 +119,18 @@ def _build_data_lookup(
             continue
         text = w["text"]
         if pattern is None or pattern.match(text):
-            result[cx] = fix_hebrew_text(text)
+            result[cx] = text
     return result
 
 
 def _row_label(row_words: list) -> str:
     """Return a single string formed by joining all non-time, non-date words in
     the row.  Used to identify which semantic role a row plays (entry, exit,
-    total, day-type, …).  Each word token is passed through fix_hebrew_text so
-    that visually-reversed Hebrew characters are corrected before matching.
-    Words are joined in right-to-left (descending x) order so that the
-    resulting string matches the logical Hebrew reading order."""
+    total, day-type, …).  Words are joined in right-to-left (descending x)
+    order so that the resulting string matches the logical Hebrew reading order.
+    Text is already corrected by fix_hebrew_text at extraction time."""
     return " ".join(
-        fix_hebrew_text(w["text"])
+        w["text"]
         for w in sorted(row_words, key=lambda word: word["x0"], reverse=True)
         if not TIME_RE.match(w["text"]) and not DATE_RE.match(w["text"])
     )
@@ -258,6 +257,11 @@ def _process_page(page) -> list:
     )
     if not words:
         return []
+
+    # Normalise all extracted text in one place: reverse visually-stored Hebrew
+    # characters so every downstream function works with logical (RTL) text.
+    for w in words:
+        w["text"] = fix_hebrew_text(w["text"])
 
     sorted_rows = _group_rows(words)
 
