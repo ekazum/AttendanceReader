@@ -32,8 +32,8 @@ HEBREW_DAYS = {
     "ש": "שבת",     # Saturday
 }
 
-DATE_RE = re.compile(r"^\d{2}/\d{2}/$")
-TIME_RE = re.compile(r"^\d{2}:\d{2}$")
+DATE_RE = re.compile(r"^\d{2}/\d{2}/(\d{2}|\d{4})$")
+TIME_RE = re.compile(r"^\d{2}:\d{2}(:\d{2})?$")
 _HEBREW_RE = re.compile(r"[\u05d0-\u05ea]")
 
 
