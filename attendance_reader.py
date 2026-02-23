@@ -34,6 +34,22 @@ HEBREW_DAYS = {
 
 DATE_RE = re.compile(r"^\d{2}/\d{2}$")
 TIME_RE = re.compile(r"^\d{2}:\d{2}$")
+_HEBREW_RE = re.compile(r"[\u05d0-\u05ea]")
+
+
+def fix_hebrew_text(text: str) -> str:
+    """Reverse *text* if it contains Hebrew characters and is not a time or date.
+
+    PDFs from Malam Sachar Plus store Hebrew in visual (left-to-right) order,
+    so each extracted word token has its characters reversed.  This function
+    restores the logical RTL order.  Times (HH:MM) and dates (DD/MM) are
+    never reversed.
+    """
+    if TIME_RE.match(text) or DATE_RE.match(text):
+        return text
+    if _HEBREW_RE.search(text):
+        return text[::-1]
+    return text
 
 
 def _is_date_row(texts: list) -> bool:
@@ -103,17 +119,20 @@ def _build_data_lookup(
             continue
         text = w["text"]
         if pattern is None or pattern.match(text):
-            result[cx] = text
+            result[cx] = fix_hebrew_text(text)
     return result
 
 
 def _row_label(row_words: list) -> str:
     """Return a single string formed by joining all non-time, non-date words in
     the row.  Used to identify which semantic role a row plays (entry, exit,
-    total, day-type, …)."""
+    total, day-type, …).  Each word token is passed through fix_hebrew_text so
+    that visually-reversed Hebrew characters are corrected before matching.
+    Words are joined in right-to-left (descending x) order so that the
+    resulting string matches the logical Hebrew reading order."""
     return " ".join(
-        w["text"]
-        for w in row_words
+        fix_hebrew_text(w["text"])
+        for w in sorted(row_words, key=lambda word: word["x0"], reverse=True)
         if not TIME_RE.match(w["text"]) and not DATE_RE.match(w["text"])
     )
 
