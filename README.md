@@ -91,27 +91,58 @@ pip install -r requirements.txt
 python malam_saar_attendance.py
 ```
 
-## Building a standalone `.exe`
+---
 
-**Windows (Command Prompt):**
+## Building a standalone Windows `.exe`
+
+Follow these steps to produce a single-file Windows executable that requires
+no Python installation on the target machine.
+
+### Prerequisites
+
+1. **Python 3.9+** installed and added to `PATH`
+   ([python.org/downloads](https://www.python.org/downloads/))
+2. **pip** (included with Python)
+
+### Step 1 – Install dependencies and PyInstaller
+
+Open **Command Prompt** in the project folder and run:
 
 ```bat
 pip install -r requirements.txt pyinstaller
+```
+
+### Step 2 – Build the executable
+
+```bat
 pyinstaller --onefile --windowed --name MalamSaarAttendance ^
     --add-data "columns_config.json;." ^
     malam_saar_attendance.py
 ```
 
-**Linux / macOS (Bash):**
+| Flag | Purpose |
+|------|---------|
+| `--onefile` | Pack everything into a single `.exe` |
+| `--windowed` | Suppress the console window (GUI app) |
+| `--name MalamSaarAttendance` | Name of the output executable |
+| `--add-data "columns_config.json;."` | Bundle the column config file |
 
-```bash
-pip install -r requirements.txt pyinstaller
-pyinstaller --onefile --windowed --name MalamSaarAttendance \
-    --add-data "columns_config.json:." \
-    malam_saar_attendance.py
+### Step 3 – Locate the output
+
+After a successful build, the executable is at:
+
+```
+dist\MalamSaarAttendance.exe
 ```
 
-The resulting executable is `dist/MalamSaarAttendance` (or `dist\MalamSaarAttendance.exe` on Windows).
+### Step 4 – Distribute
+
+Copy **only** `dist\MalamSaarAttendance.exe` to the target machine — no
+other files are required. The application is fully self-contained.
+
+> **Tip:** To customise column x-ranges without rebuilding, place a copy of
+> `columns_config.json` in the **same folder** as the `.exe`. It will be
+> loaded automatically at startup and will override the bundled defaults.
 
 ---
 
