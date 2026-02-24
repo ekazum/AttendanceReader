@@ -1,106 +1,117 @@
 # AttendanceReader
 
-A standalone Windows Desktop application that reads a **Malam Sachar Plus**
-(מלם שכר Plus) monthly attendance PDF and converts it into a structured
+A standalone Windows Desktop application that reads a **Malam Saar**
+(מלם שכר) monthly attendance PDF and converts it into a structured
 Excel (`.xlsx`) file – **no Python or runtime installation required** by the
 end-user.
-
-Two application modes are provided:
-
-| Application | File | When to use |
-|-------------|------|-------------|
-| Local PDF parser | `attendance_reader.py` | PDFs up to ~100 pages; no cloud required |
-| Document AI (cloud) | `attendance_reader_docai.py` | PDFs > 100 pages; uses Google Cloud Document AI Batch Processing |
 
 ---
 
 ## Features
 
-- Simple GUI: browse for the PDF, pick an output path, one click to convert.
-- Parses the horizontal date/time grid produced by Malam Sachar Plus.
-- Handles Hebrew RTL text (day letters א–ש, column headers).
-- Output `.xlsx` columns:
-  | Column | Hebrew header | Meaning |
-  |--------|--------------|---------|
-  | A | תאריך | Date (DD/MM/YY or DD/MM/YYYY) |
-  | B | יום בשבוע | Day of the week |
-  | C | שעת כניסה | Entry time |
-  | D | שעת יציאה | Exit time |
-  | E | סה"כ שעות ליום | Total hours per day |
-  | F | סוג יום | Day type (e.g. חופשה, מחלה) |
+- Simple GUI: browse for the PDF, click **Export to Excel**, done.
+- Uses `pdfplumber` to extract text directly from the PDF — no internet or
+  cloud credentials required.
+- Parses the horizontal date/time grid produced by Malam Saar.
+- Handles Hebrew RTL text (day letters, column headers, activity names).
+- Translates Hebrew activity labels to English (e.g. חופשה → Vacation,
+  מחלה → Sick, מילואים → Military Reserve).
+- Writes a two-sheet Excel workbook:
+
+  **Sheet 1 – Daily Attendance** (one row per calendar day):
+
+  | Column | Header | Description |
+  |--------|--------|-------------|
+  | A | Employee ID | Employee identity number |
+  | B | Employee Name | Employee full name |
+  | C | Tag Number | Badge / tag number |
+  | D | Salary Month | MM/YYYY of the pay period |
+  | E | Date | Full date (DD/MM/YYYY) |
+  | F | Day of Week | Hebrew day letter |
+  | G | Day Type | Activity in English (Work, Vacation, Sick, …) |
+  | H | Shift Premium | `True` if a shift-premium marker (`*`) is present |
+  | I | Entry (Actual) | Actual clock-in time |
+  | J | Exit (Actual) | Actual clock-out time |
+  | K | Total Present Hours | Total time present (`[h]:mm`) |
+  | L | Entry (For Pay) | Payable entry time |
+  | M | Exit (For Pay) | Payable exit time |
+  | N | Total For Pay Hours | Total payable hours (`[h]:mm`) |
+  | O | Standard Hours | Standard contracted hours (`[h]:mm`) |
+  | P | OT 100% | Overtime at 100% rate (`[h]:mm`) |
+  | Q | OT 125% | Overtime at 125% rate (`[h]:mm`) |
+  | R | OT 150% | Overtime at 150% rate (`[h]:mm`) |
+  | S | OT 200% | Overtime at 200% rate (`[h]:mm`) |
+  | T | Shift Bonus 87 | Shift bonus at 87% (`[h]:mm`) |
+  | U | Shift Bonus 50 | Shift bonus at 50% (`[h]:mm`) |
+  | V | Shift Bonus 20 | Shift bonus at 20% (`[h]:mm`) |
+  | W | Deduction | Deduction hours (`[h]:mm`) |
+
+  **Sheet 2 – Monthly Summary** (one row per salary month, SUMIF formulas
+  referencing Sheet 1):
+
+  | Column | Header |
+  |--------|--------|
+  | A | Salary Month |
+  | B | Work Days |
+  | C | Vacation Days |
+  | D | Sick Days |
+  | E | No Report Days |
+  | F | Total Present Hours |
+  | G | Total For Pay Hours |
+  | H | Total OT 100% |
+  | I | Total OT 125% |
+  | J | Total OT 150% |
+  | K | Total OT 200% |
+  | L | Military Reserve Days |
+  | M | On-Call Days |
+  | N | Work Accident Days |
+  | O | Recess Days |
 
 ---
 
-## Application 1 – Local PDF Parser (`attendance_reader.py`)
+## Configuration – `columns_config.json`
 
-Uses `pdfplumber` to extract text directly from the PDF — no internet or
-cloud credentials required.
+The PDF parser locates each data column by its horizontal x-coordinate range.
+These ranges are stored in `columns_config.json` (included in the repo and
+bundled into the `.exe`).
 
-### Running from source
+If a copy of `columns_config.json` is placed **next to the executable**, it
+takes precedence over the bundled defaults — allowing you to fine-tune ranges
+for different PDF layouts without rebuilding.
 
-```bash
-pip install -r requirements.txt
-python attendance_reader.py
-```
-
-### Building a standalone `.exe`
-
-```bash
-pip install -r requirements.txt pyinstaller
-pyinstaller --onefile --windowed --name AttendanceReader attendance_reader.py
-```
+If neither file is found at runtime, the application writes the default config
+to the executable's directory automatically.
 
 ---
 
-## Application 2 – Document AI Batch Processor (`attendance_reader_docai.py`)
-
-For large PDFs (> 100 pages) that exceed synchronous Document AI limits.
-Uploads the PDF to Google Cloud Storage, runs a Document AI Batch Processing
-job, retrieves the sharded JSON results via the Document AI Toolbox, and
-converts them to Excel.
-
-### Google Cloud prerequisites
-
-1. A GCP project with the **Document AI API** and **Cloud Storage API** enabled.
-2. A Document AI processor (e.g. Document OCR or Form Parser) in a supported region.
-3. A GCS bucket in the same region as the processor.
-4. A service-account JSON key with the following roles:
-   - `roles/documentai.apiUser`
-   - `roles/storage.objectAdmin` (on the GCS bucket)
-
-### Configuration
-
-Copy `.env.example` to `.env` in the same directory as the executable and
-fill in your values.  **Never commit `.env` or the service-account key.**
-
-```ini
-PROJECT_ID=your-gcp-project-id
-LOCATION=us
-PROCESSOR_ID=your-processor-id
-GCS_BUCKET_NAME=your-gcs-bucket-name
-GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\your-service-account-key.json
-```
-
-### Running from source
+## Running from source
 
 ```bash
 pip install -r requirements.txt
-python attendance_reader_docai.py
+python malam_saar_attendance.py
 ```
 
-### Building a standalone `.exe`
+## Building a standalone `.exe`
+
+**Windows (Command Prompt):**
+
+```bat
+pip install -r requirements.txt pyinstaller
+pyinstaller --onefile --windowed --name MalamSaarAttendance ^
+    --add-data "columns_config.json;." ^
+    malam_saar_attendance.py
+```
+
+**Linux / macOS (Bash):**
 
 ```bash
 pip install -r requirements.txt pyinstaller
-pyinstaller --onefile --windowed --name AttendanceReaderDocAI \
-    --exclude-module pdfplumber \
-    attendance_reader_docai.py
+pyinstaller --onefile --windowed --name MalamSaarAttendance \
+    --add-data "columns_config.json:." \
+    malam_saar_attendance.py
 ```
 
-The resulting executable is `dist\AttendanceReaderDocAI.exe`.
-Place the `.env` file and the service-account JSON key in the **same folder**
-as the executable — they are loaded at runtime and must **not** be bundled
-inside the `.exe`.
+The resulting executable is `dist/MalamSaarAttendance` (or `dist\MalamSaarAttendance.exe` on Windows).
 
 ---
 
@@ -108,11 +119,7 @@ inside the `.exe`.
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| pdfplumber | 0.11.4 | Extract text from PDF (local mode) |
+| pdfplumber | 0.11.4 | Extract text and word positions from PDF |
 | openpyxl | 3.1.5 | Write `.xlsx` files |
-| google-cloud-documentai | 3.10.0 | Document AI Batch Processing API client |
-| google-cloud-storage | 3.9.0 | GCS upload/download |
-| google-cloud-documentai-toolbox | 0.15.0a0 | Parse sharded batch results |
-| python-dotenv | 1.2.1 | Load `.env` configuration |
 | tkinter | stdlib | Native Windows GUI (bundled with Python) |
 
