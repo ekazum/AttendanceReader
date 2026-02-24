@@ -157,6 +157,15 @@ ACTIVITY_MAP: dict[str, str] = {
     "חג":                 "Holiday",
     'חוה"מ':              "Intermediate Holiday",
     "ע' חג":              "Holiday Eve",
+    "פגרה":               "Recess",
+    "תאונת עבודה":        "Work Accident",
+    "מילואים":            "Military Reserve",
+    "כוננות":             "On-Call",
+    "לימודים":            "Studies",
+    "טיול":               "Trip",
+    "הצהרה":              "Declaration",
+    "יום גיבוש":          "Team Building",
+    "בחירות":             "Elections",
 }
 
 # Activity values for which all time/OT columns are set to None
@@ -236,6 +245,27 @@ def _parse_standard_hours(token: str) -> tuple[str | None, str | None]:
     if _RE_TIME_TOKEN.match(token):
         return token, None
     return token, None
+
+
+def _hhmm_to_excel_time(value: str | None) -> float | None:
+    """Convert HH:MM string to Excel time fraction (hours / 24).
+
+    Returns None if value is None or unparseable.
+    Handles values >= 24h like '51:45' (fraction > 1.0).
+    Handles negative values like '-08:00' (returns negative fraction).
+    """
+    if not value:
+        return None
+    try:
+        negative = value.startswith("-")
+        clean = value.lstrip("-")
+        parts = clean.split(":")
+        hours = int(parts[0])
+        minutes = int(parts[1]) if len(parts) > 1 else 0
+        fraction = (hours + minutes / 60) / 24
+        return -fraction if negative else fraction
+    except (ValueError, IndexError, AttributeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -390,19 +420,19 @@ def _parse_data_rows(
             "shift_premium":         col_values.get("shift_premium", False),
             "entry_actual":          _t("entry_actual"),
             "exit_actual":           _t("exit_actual"),
-            "total_present_hours":   _t("total_present"),
+            "total_present_hours":   _hhmm_to_excel_time(_t("total_present")),
             "entry_for_pay":         _t("entry_for_pay"),
             "exit_for_pay":          _t("exit_for_pay"),
-            "total_for_pay_hours":   _t("total_for_pay"),
-            "standard_hours":        _t("standard_hours"),
-            "ot_100":                _t("ot_100"),
-            "ot_125":                _t("ot_125"),
-            "ot_150":                _t("ot_150"),
-            "ot_200":                _t("ot_200"),
-            "shift_bonus_87":        _t("shift_87"),
-            "shift_bonus_50":        _t("shift_50"),
-            "shift_bonus_20":        _t("shift_20"),
-            "deduction":             _t("deduction"),
+            "total_for_pay_hours":   _hhmm_to_excel_time(_t("total_for_pay")),
+            "standard_hours":        _hhmm_to_excel_time(_t("standard_hours")),
+            "ot_100":                _hhmm_to_excel_time(_t("ot_100")),
+            "ot_125":                _hhmm_to_excel_time(_t("ot_125")),
+            "ot_150":                _hhmm_to_excel_time(_t("ot_150")),
+            "ot_200":                _hhmm_to_excel_time(_t("ot_200")),
+            "shift_bonus_87":        _hhmm_to_excel_time(_t("shift_87")),
+            "shift_bonus_50":        _hhmm_to_excel_time(_t("shift_50")),
+            "shift_bonus_20":        _hhmm_to_excel_time(_t("shift_20")),
+            "deduction":             _hhmm_to_excel_time(_t("deduction")),
         }
         records.append(record)
 
@@ -547,6 +577,13 @@ _RIGHT_ALIGN_KEYS = {
     "shift_bonus_87", "shift_bonus_50", "shift_bonus_20", "deduction",
 }
 
+# Columns that hold Excel time fractions and need [h]:mm number format
+_DURATION_KEYS = {
+    "total_present_hours", "total_for_pay_hours", "standard_hours",
+    "ot_100", "ot_125", "ot_150", "ot_200",
+    "shift_bonus_87", "shift_bonus_50", "shift_bonus_20", "deduction",
+}
+
 
 def _auto_fit_column(ws, col_idx: int) -> None:
     """Set column width to max cell content length × 1.2, minimum 10."""
@@ -588,6 +625,8 @@ def create_excel(records: list[dict[str, Any]], output_path: str) -> None:
                 cell.number_format = "DD/MM/YYYY"
                 cell.alignment = _RIGHT_ALIGN
             elif key in _RIGHT_ALIGN_KEYS:
+                if key in _DURATION_KEYS:
+                    cell.number_format = "[h]:mm"
                 cell.alignment = _RIGHT_ALIGN
             else:
                 cell.alignment = _LEFT_ALIGN
@@ -612,6 +651,10 @@ def create_excel(records: list[dict[str, Any]], output_path: str) -> None:
         "Total OT 125%",
         "Total OT 150%",
         "Total OT 200%",
+        "Military Reserve Days",
+        "On-Call Days",
+        "Work Accident Days",
+        "Recess Days",
     ]
 
     for col_idx, header in enumerate(summary_headers, 1):
@@ -670,6 +713,14 @@ def create_excel(records: list[dict[str, Any]], output_path: str) -> None:
                  value=_sumif_val(ot150_col)).font = _DATA_FONT
         ws2.cell(row=sum_row, column=11,
                  value=_sumif_val(ot200_col)).font = _DATA_FONT
+        ws2.cell(row=sum_row, column=12,
+                 value=_sumif_type("Military Reserve")).font = _DATA_FONT
+        ws2.cell(row=sum_row, column=13,
+                 value=_sumif_type("On-Call")).font = _DATA_FONT
+        ws2.cell(row=sum_row, column=14,
+                 value=_sumif_type("Work Accident")).font = _DATA_FONT
+        ws2.cell(row=sum_row, column=15,
+                 value=_sumif_type("Recess")).font = _DATA_FONT
 
     ws2.freeze_panes = "A2"
     for col_idx in range(1, len(summary_headers) + 1):
