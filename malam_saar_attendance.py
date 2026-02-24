@@ -171,6 +171,12 @@ _RE_DATE_TOKEN = re.compile(r"^\d{2}/\d{2}$")
 _RE_TIME_TOKEN = re.compile(r"^\d{2}:\d{2}(:\d{2})?$")
 _RE_DATA_PAGE_MARKER = re.compile(r"חישוב:")
 
+# Fixed Hebrew words that always precede the employee name on the header line.
+# The normalised line is always: '... בשבוע העבודה ימי <NAME_WORDS> שם ...'
+# Walking backwards from before 'שם', we stop as soon as we hit one of these
+# known header/context words so that only the name tokens are collected.
+_NAME_STOP_WORDS = frozenset({"ימי", "העבודה", "בשבוע"})
+
 
 def _extract_employee_name(normalized_text: str) -> str:
     """Extract employee name from the normalised header line.
@@ -179,15 +185,18 @@ def _extract_employee_name(normalized_text: str) -> str:
       'בשבוע העבודה ימי ויאצ'סלב פונדר שם מ.נ.0 32070758 זהות'
     The employee name is the sequence of consecutive Hebrew-only words
     immediately to the LEFT of the token 'שם' (i.e. preceding it in the string).
-    We split the line on 'שם', take everything before it, then walk backwards
-    collecting Hebrew words until we hit a non-Hebrew token.
+    We split the line on ' שם' (with leading space to avoid substring matches),
+    take everything before it, then walk backwards collecting Hebrew words until
+    we hit a known stop-word from _NAME_STOP_WORDS or a non-Hebrew token.
     """
     for line in normalized_text.splitlines():
         if "שם" in line and "זהות" in line:
-            before_shem = line.split("שם")[0]
+            before_shem = line.split(" שם")[0]
             tokens = before_shem.strip().split()
             name_parts: list[str] = []
             for token in reversed(tokens):
+                if token in _NAME_STOP_WORDS:
+                    break
                 if _HEBREW_CHAR_RE.search(token):
                     name_parts.insert(0, token)
                 else:
