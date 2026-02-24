@@ -1,0 +1,21 @@
+{
+  "date":            [795, 830],
+  "day_of_week":     [782, 800],
+  "shift_marker":    [750, 765],
+  "entry_actual":    [704, 720],
+  "exit_actual":     [677, 693],
+  "total_present":   [620, 637],
+  "entry_for_pay":   [652, 668],
+  "exit_for_pay":    [591, 607],
+  "total_for_pay":   [565, 581],
+  "activity":        [510, 545],
+  "standard_hours":  [434, 492],
+  "ot_100":          [398, 420],
+  "ot_125":          [255, 277],
+  "ot_150":          [291, 313],
+  "ot_200":          [327, 349],
+  "shift_87":        [184, 210],
+  "shift_50":        [220, 246],
+  "shift_20":        [256, 282],
+  "deduction":       [110, 135]
+}
