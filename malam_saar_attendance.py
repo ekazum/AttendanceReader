@@ -86,19 +86,19 @@ DEFAULT_CONFIG: dict[str, list[float]] = {
     "shift_marker":   [750, 765],
     "entry_actual":   [704, 720],
     "exit_actual":    [677, 693],
-    "total_present":  [620, 637],
-    "entry_for_pay":  [652, 668],
+    "total_present":  [652, 668],   # was [620, 637] — FIXED
+    "entry_for_pay":  [620, 645],   # was [652, 668] — FIXED
     "exit_for_pay":   [591, 607],
     "total_for_pay":  [565, 581],
-    "activity":       [510, 545],
+    "activity":       [485, 545],   # widened — FIXED (Bug 3)
     "standard_hours": [434, 492],
     "ot_100":         [398, 420],
-    "ot_125":         [255, 277],
-    "ot_150":         [291, 313],
-    "ot_200":         [327, 349],
-    "shift_87":       [184, 210],
-    "shift_50":       [220, 246],
-    "shift_20":       [256, 282],
+    "ot_125":         [362, 382],   # was [255, 277] — FIXED
+    "ot_150":         [327, 347],   # was [291, 313] — FIXED
+    "ot_200":         [291, 311],   # was [327, 349] — FIXED
+    "shift_87":       [251, 272],   # was [184, 210] — FIXED
+    "shift_50":       [222, 242],
+    "shift_20":       [184, 207],   # was [256, 282] — FIXED
     "deduction":      [110, 135],
 }
 
@@ -162,16 +162,39 @@ ACTIVITY_MAP: dict[str, str] = {
 # Activity values for which all time/OT columns are set to None
 _NULL_ACTIVITIES = {"אין דיווח נוכחות", "ללא תקן עבודה"}
 
-# Regex patterns (applied *after* normalisation → correct logical Hebrew)
-_RE_SALARY_MONTH = re.compile(r"בחודש\s+שכר\s+(\d{2}/\d{2}/\d{4})")
-_RE_EMPLOYEE_NAME = re.compile(
-    r"שם\s+([\u05D0-\u05EA'\"\s]+?)\s+מ\.נ"
-)
-_RE_EMPLOYEE_ID = re.compile(r"זהות\s+(\d+)")
-_RE_TAG_NUMBER = re.compile(r"מספר\s+תג[:\s]+(\d+)")
+# Regex patterns (applied *after* normalisation → visual/token order preserved,
+# numbers appear BEFORE Hebrew labels in the extracted line)
+_RE_SALARY_MONTH = re.compile(r"(\d{2}/\d{2}/\d{4})\s+שכר\s+בחודש")
+_RE_EMPLOYEE_ID = re.compile(r"(\d{7,9})\s+זהות")
+_RE_TAG_NUMBER = re.compile(r"(\d+)\s+תג:")
 _RE_DATE_TOKEN = re.compile(r"^\d{2}/\d{2}$")
 _RE_TIME_TOKEN = re.compile(r"^\d{2}:\d{2}(:\d{2})?$")
-_RE_DATA_PAGE_MARKER = re.compile(r"זמן\s+חישוב\s*:")
+_RE_DATA_PAGE_MARKER = re.compile(r"חישוב:")
+
+
+def _extract_employee_name(normalized_text: str) -> str:
+    """Extract employee name from the normalised header line.
+
+    After normalisation the relevant line looks like:
+      'בשבוע העבודה ימי ויאצ'סלב פונדר שם מ.נ.0 32070758 זהות'
+    The employee name is the sequence of consecutive Hebrew-only words
+    immediately to the LEFT of the token 'שם' (i.e. preceding it in the string).
+    We split the line on 'שם', take everything before it, then walk backwards
+    collecting Hebrew words until we hit a non-Hebrew token.
+    """
+    for line in normalized_text.splitlines():
+        if "שם" in line and "זהות" in line:
+            before_shem = line.split("שם")[0]
+            tokens = before_shem.strip().split()
+            name_parts: list[str] = []
+            for token in reversed(tokens):
+                if _HEBREW_CHAR_RE.search(token):
+                    name_parts.insert(0, token)
+                else:
+                    break
+            if name_parts:
+                return " ".join(name_parts)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -239,16 +262,13 @@ def _extract_headers(page_text: str) -> dict[str, str]:
     """Extract salary_month, employee_name, employee_id, tag_number from page text.
 
     *page_text* must already be normalised (each line passed through normalize_line).
+    Numbers appear BEFORE their Hebrew labels after normalisation.
     """
     headers: dict[str, str] = {}
 
     m = _RE_SALARY_MONTH.search(page_text)
     if m:
-        headers["salary_month"] = m.group(1)  # '01/MM/YYYY'
-
-    m = _RE_EMPLOYEE_NAME.search(page_text)
-    if m:
-        headers["employee_name"] = m.group(1).strip()
+        headers["salary_month"] = m.group(1)
 
     m = _RE_EMPLOYEE_ID.search(page_text)
     if m:
@@ -257,6 +277,10 @@ def _extract_headers(page_text: str) -> dict[str, str]:
     m = _RE_TAG_NUMBER.search(page_text)
     if m:
         headers["tag_number"] = m.group(1)
+
+    name = _extract_employee_name(page_text)
+    if name:
+        headers["employee_name"] = name
 
     return headers
 
@@ -310,6 +334,7 @@ def _parse_data_rows(
 
         # Build column→value map for this row
         col_values: dict[str, Any] = {}
+        activity_words: list[tuple[float, str]] = []  # (x0, text)
         for w in row_words:
             col = _assign_column(w["x0"], config)
             if col is None:
@@ -322,11 +347,13 @@ def _parse_data_rows(
             elif col == "shift_marker":
                 col_values["shift_premium"] = (text == "*")
             elif col == "activity":
-                # Accumulate multi-word activity (e.g. 'אין דיווח נוכחות')
-                existing = col_values.get("activity", "")
-                col_values["activity"] = (existing + " " + text).strip()
+                activity_words.append((w["x0"], text))
             else:
                 col_values[col] = text
+
+        # Sort activity words by descending x (rightmost first = correct RTL order)
+        activity_words.sort(key=lambda t: t[0], reverse=True)
+        col_values["activity"] = " ".join(text for _, text in activity_words)
 
         activity_raw = col_values.get("activity", "").strip()
         activity_en = ACTIVITY_MAP.get(activity_raw, activity_raw)
