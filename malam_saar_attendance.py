@@ -268,6 +268,59 @@ def _hhmm_to_excel_time(value: str | None) -> float | None:
         return None
 
 
+def _calc_night_ot_hours(
+    entry_str: str | None,
+    exit_str: str | None,
+    total_present: float | None,
+    night_threshold_h: float = 2.0,
+    work_threshold_h: float = 7.0,
+) -> float | None:
+    """Return hours above work_threshold_h if night overlap >= night_threshold_h.
+
+    Night window is 22:00-06:00 (wraps midnight).
+    entry_str / exit_str are 'HH:MM' strings (clock times, not durations).
+    total_present is an Excel time fraction (e.g. 9.5/24 for 09:30).
+    Returns an Excel time fraction or None.
+    """
+    if not entry_str or not exit_str or total_present is None:
+        return None
+    try:
+        eh, em = int(entry_str[:2]), int(entry_str[3:5])
+        xh, xm = int(exit_str[:2]), int(exit_str[3:5])
+    except (ValueError, IndexError):
+        return None
+
+    entry_min = eh * 60 + em
+    exit_min  = xh * 60 + xm
+
+    # Crosses midnight when exit <= entry (e.g. 21:10 → 06:50)
+    if exit_min <= entry_min:
+        exit_min += 24 * 60  # normalise to a single continuous range
+
+    # Overlap with 22:00-24:00 segment (minutes 1320-1440)
+    night_mins = max(0, min(exit_min, 24 * 60) - max(entry_min, 22 * 60))
+
+    # Overlap with 00:00-06:00 segment (minutes 0-360)
+    # Only applicable when the shift started before 06:00 without crossing midnight,
+    # or when the normalised exit_min extends beyond 24*60.
+    if entry_min < 6 * 60:
+        # Shift starts in early morning and does not cross midnight
+        night_mins += max(0, min(exit_min, 6 * 60) - entry_min)
+    elif exit_min > 24 * 60:
+        # Shift crosses midnight; the post-midnight portion may extend into 00:00-06:00
+        night_mins += max(0, min(exit_min - 24 * 60, 6 * 60))
+
+    night_hours = night_mins / 60.0
+    if night_hours < night_threshold_h:
+        return None
+
+    total_present_hours = total_present * 24  # convert fraction back to hours
+    ot_hours = max(0.0, total_present_hours - work_threshold_h)
+    if ot_hours == 0.0:
+        return None
+    return ot_hours / 24  # return as Excel time fraction
+
+
 # ---------------------------------------------------------------------------
 # Date reconstruction
 # ---------------------------------------------------------------------------
@@ -433,6 +486,11 @@ def _parse_data_rows(
             "shift_bonus_50":        _hhmm_to_excel_time(_t("shift_50")),
             "shift_bonus_20":        _hhmm_to_excel_time(_t("shift_20")),
             "deduction":             _hhmm_to_excel_time(_t("deduction")),
+            "night_ot_hours":        _calc_night_ot_hours(
+                _t("entry_actual"),
+                _t("exit_actual"),
+                _hhmm_to_excel_time(_t("total_present")),
+            ),
         }
         records.append(record)
 
@@ -544,6 +602,7 @@ _DAILY_COLUMNS: list[tuple[str, str]] = [
     ("Shift Bonus 50",        "shift_bonus_50"),
     ("Shift Bonus 20",        "shift_bonus_20"),
     ("Deduction",             "deduction"),
+    ("Night OT Hours",        "night_ot_hours"),
 ]
 
 # Sheet 2 column positions in Sheet 1 (1-based, for SUMIF formulas)
@@ -575,6 +634,7 @@ _RIGHT_ALIGN_KEYS = {
     "entry_for_pay", "exit_for_pay", "total_for_pay_hours",
     "standard_hours", "ot_100", "ot_125", "ot_150", "ot_200",
     "shift_bonus_87", "shift_bonus_50", "shift_bonus_20", "deduction",
+    "night_ot_hours",
 }
 
 # Columns that hold Excel time fractions and need [h]:mm number format
@@ -582,6 +642,7 @@ _DURATION_KEYS = {
     "total_present_hours", "total_for_pay_hours", "standard_hours",
     "ot_100", "ot_125", "ot_150", "ot_200",
     "shift_bonus_87", "shift_bonus_50", "shift_bonus_20", "deduction",
+    "night_ot_hours",
 }
 
 
